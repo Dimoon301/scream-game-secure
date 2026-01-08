@@ -258,24 +258,85 @@ function drawGame() {
     ctx.fillRect(player.x + 16, player.y + 8, 4, 4);
 }
 
-// ==================== УПРАВЛЕНИЕ ====================
-document.getElementById('btnLeft').addEventListener('touchstart', (e) => {
-    e.preventDefault();
-    keys.left = true;
-});
-document.getElementById('btnLeft').addEventListener('touchend', () => { keys.left = false; });
+// ==================== УПРАВЛЕНИЕ (УНИВЕРСАЛЬНОЕ) ====================
+function setupControl(buttonId, keyName) {
+    const btn = document.getElementById(buttonId);
+    
+    // Для телефона (тач-события)
+    btn.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        keys[keyName] = true;
+    });
+    btn.addEventListener('touchend', () => {
+        keys[keyName] = false;
+    });
+    
+    // Для компьютера (мышь)
+    btn.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        keys[keyName] = true;
+    });
+    btn.addEventListener('mouseup', () => {
+        keys[keyName] = false;
+    });
+    btn.addEventListener('mouseleave', () => {
+        keys[keyName] = false; // Если курсор ушёл с кнопки
+    });
+}
 
-document.getElementById('btnRight').addEventListener('touchstart', (e) => {
-    e.preventDefault();
-    keys.right = true;
-});
-document.getElementById('btnRight').addEventListener('touchend', () => { keys.right = false; });
+// Настраиваем кнопки
+setupControl('btnLeft', 'left');
+setupControl('btnRight', 'right');
 
-document.getElementById('btnJump').addEventListener('touchstart', (e) => {
+// Особый случай для прыжка
+const jumpBtn = document.getElementById('btnJump');
+function handleJumpStart(e) {
     e.preventDefault();
     if (player.jumpCount < 2) {
         player.dy = -player.jumpForce;
         player.jumpCount++;
+    }
+}
+function handleJumpEnd(e) {
+    e.preventDefault();
+}
+jumpBtn.addEventListener('touchstart', handleJumpStart);
+jumpBtn.addEventListener('touchend', handleJumpEnd);
+jumpBtn.addEventListener('mousedown', handleJumpStart);
+jumpBtn.addEventListener('mouseup', handleJumpEnd);
+
+// ===== УПРАВЛЕНИЕ С КЛАВИАТУРЫ (для ПК) =====
+document.addEventListener('keydown', (e) => {
+    switch(e.code) {
+        case 'ArrowLeft':
+        case 'KeyA':
+            keys.left = true;
+            break;
+        case 'ArrowRight':
+        case 'KeyD':
+            keys.right = true;
+            break;
+        case 'ArrowUp':
+        case 'Space':
+        case 'KeyW':
+            if (player.jumpCount < 2) {
+                player.dy = -player.jumpForce;
+                player.jumpCount++;
+            }
+            break;
+    }
+});
+
+document.addEventListener('keyup', (e) => {
+    switch(e.code) {
+        case 'ArrowLeft':
+        case 'KeyA':
+            keys.left = false;
+            break;
+        case 'ArrowRight':
+        case 'KeyD':
+            keys.right = false;
+            break;
     }
 });
 
@@ -295,3 +356,4 @@ async function initGame() {
 
 // Запускаем игру когда страница загрузится
 window.addEventListener('load', initGame);
+
