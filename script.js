@@ -196,7 +196,7 @@ function updateGame() {
     // Обновление UI
     document.getElementById('score').innerText = score;
     document.getElementById('lvl').innerText = level;
-    document.getElementById('hpDisp').innerHTML = '❤️'.repeat(hp);
+    document.getElementById('hpDisp').innerHTML = '❤️'.repeat(Math.max(0, hp));
 }
 
 async function handleDeath() {
@@ -357,3 +357,4 @@ async function initGame() {
 
 // Запускаем игру когда страница загрузится
 window.addEventListener('load', initGame);
+
